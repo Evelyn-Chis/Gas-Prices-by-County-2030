@@ -1,0 +1,207 @@
+# Mounting GC to enable persistent files:
+from google.colab import drive
+drive.mount('/content/drive')
+
+#pip installs
+!pip install openpyxl
+!pip install pyxlsb
+!pip install pandas
+!pip install us
+
+##### Importing data and wrangling it #####
+
+import pandas as pd
+import openpyxl
+import pyxlsb
+import us
+
+### Fuel Consumption per Capita ###
+conscapita2016 = pd.read_excel('/content/drive/My Drive/BAXA Tech Night/Fall 2024 Project (2030 Gas)/2016data.xlsb', sheet_name = 'County', skiprows=4)
+conscapita2016 = conscapita2016[['state_abbr', 'county_name', 'consumption (gallons/capita)']]
+state_dict = {state.abbr: state.name for state in us.states.STATES} #state.name.lower() for lowercase
+conscapita2016['state_abbr'] = conscapita2016['state_abbr'].map(state_dict)
+conscapita2016 = conscapita2016.rename(columns = {'state_abbr': 'state'})
+conscapita2016['county_name'] = conscapita2016['county_name'].str.replace(' County', '')
+conscapita2016 = conscapita2016.rename(columns = {'county_name': 'county'})
+conscapita2016
+
+### County Population ###
+countypop = pd.read_excel('/content/drive/My Drive/BAXA Tech Night/Fall 2024 Project (2030 Gas)/co-est2023-pop.xlsx', skiprows = 3)
+countypop = countypop.rename(columns = {'Unnamed: 0': 'state_county'})
+countypop = countypop.drop(columns = ['Unnamed: 1'])
+countypop['state_county'] = countypop['state_county'].str.lstrip('.')#.str.lower()
+countypop = countypop.drop(index=0)
+countypop = countypop.drop(index=[3145,3146,3147,3148,3149,3150])
+countypop = countypop.reset_index(drop=True)
+countypop[['county', 'state']] = countypop['state_county'].str.split(', ', n=1, expand=True)
+countypop = countypop.drop(columns = ['state_county'])
+countypop['county'] = countypop['county'].str.replace(' County', '')
+countypop
+
+### Fuel Use ###
+fueluse = pd.read_excel('/content/drive/My Drive/BAXA Tech Night/Fall 2024 Project (2030 Gas)/fueluse.xlsx', sheet_name = "Data", skiprows = 4)
+fueluse = fueluse.drop(columns = ['Unnamed: 0'])
+fueluse = fueluse.rename(columns = {'Unnamed: 1': 'year', 'Distillate fuel oil': 'diesel', 'Motor gasoline': 'gasoline'})
+fueluse
+
+### Gas Prices by State over Time ###
+gasprices = pd.read_excel('/content/drive/My Drive/BAXA Tech Night/Fall 2024 Project (2030 Gas)/Gas Prices by State.xls', sheet_name = 'Data 1', skiprows = 2)
+
+# Removing non-state columns
+state_names = [state.name for state in us.states.STATES]
+columns_to_keep = [col for col in gasprices.columns if any(state in col for state in state_names)]
+if 'Date' in gasprices.columns:
+    columns_to_keep.insert(0, 'Date')
+gasprices = gasprices[columns_to_keep]
+
+# Renaming columns to state names for simplicity
+new_columns = {}
+for col in gasprices.columns:
+    for state in state_names:
+        if state in col:
+            new_columns[col] = state
+gasprices = gasprices.rename(columns=new_columns)
+
+# Filling in Missing Values with Interpolation
+gasprices = gasprices.interpolate()
+gasprices = gasprices.bfill()
+
+# Date read as date
+
+##### 2030 Fuel Increase #####
+
+from sklearn.linear_model import LinearRegression
+import numpy as np
+import pandas as pd
+
+# Wrangle the dataset for analysis
+
+fueluse = fueluse.loc[5:]
+fueluse['Number'] = range(0, len(fueluse))
+fueluse = fueluse[['Number', 'gasoline']]
+
+fuelX = fueluse['Number'].values.reshape(-1, 1)
+
+fuelModels = []
+fuelY = fueluse['gasoline']
+fuelModel = LinearRegression()
+fuelModel.fit(fuelX, fuelY)
+fuelModels.append(fuelModel)
+
+fueluse2030 = [model.predict(np.array([[30]]))[0] for model in fuelModels]
+
+print(fueluse2030)
+
+fuelincrease = float(8972.95/8548.98)
+
+fuelincrease
+
+##### 2030 Fuel per Capita #####
+
+conscapita2016
+
+conscapita2030 = conscapita2016.copy()
+
+conscapita2030['consumption (gallons/capita)'] = conscapita2016['consumption (gallons/capita)'] * fuelincrease
+
+#conscapita2016
+#conscapita2030
+
+##### 2030 County Population #####
+
+from sklearn.linear_model import LinearRegression
+import numpy as np
+import pandas as pd
+
+# Wrangle the dataset for analysis
+
+countypop = countypop.rename(columns={2020: 0, 2021: 1, 2022: 2, 2023: 3})
+stateAssign = countypop['state']
+countypop = countypop.T
+countypop.columns = countypop.iloc[4]
+countypop['Number'] = range(0, len(countypop))
+countystate = countypop.loc[['county', 'state']] #Keep key
+countypop = countypop.drop(['county', 'state'])
+
+popX = countypop['Number'].values.reshape(-1, 1)
+countystate = countystate.columns[0:-1]
+
+countystate
+countypop
+
+popModels = []
+for i in range(0, 3144):
+  popY = countypop.iloc[:,i]
+  popModel = LinearRegression()
+  popModel.fit(popX, popY)
+  popModels.append(popModel)
+
+countypop2030_predictions = [model.predict(np.array([[564]]))[0] for model in popModels]
+county_name = countypop.columns[0:-1]  # Exclude the 'Number' column
+countypop_prediction = pd.DataFrame({'State': stateAssign, 'County': county_name, '2030 Population': countypop2030_predictions})
+
+#countypop_prediction
+
+##### 2030 Gas Prices #####
+
+from sklearn.linear_model import LinearRegression
+import numpy as np
+
+### Gas Prices by State Regression ###
+
+gasprices['Number'] = range(1, len(gasprices) + 1)
+gasX = gasprices['Number'].values.reshape(-1, 1)
+
+#gasX = gasprices['Date'].values.reshape(-1, 1)
+
+gasModels = []
+for i in range(1, 51):
+  gasY = gasprices.iloc[:,i]
+  gasModel = LinearRegression()
+  gasModel.fit(gasX, gasY)
+  gasModels.append(gasModel)
+
+# Predict the gas price for the 564th month for each state
+gasprices2030_predictions = [model.predict(np.array([[564]]))[0] for model in gasModels] #print(gasModels[4].predict(np.array([[564]])))
+
+# Create a new DataFrame with state names and their predictions
+state_names_gasprices = gasprices.columns[1:-1]  # Exclude the 'Number' column
+gasprices_prediction = pd.DataFrame({'State': state_names_gasprices, 'January 2030 Price': gasprices2030_predictions})
+
+print(gasprices_prediction)
+
+#gasprices_prediction
+
+##### Joining the Dataframes #####
+
+# The datasets we are merging #
+conscapita2030
+countypop_prediction
+gasprices_prediction
+
+conscapita2030.rename(columns={'county': 'County'}, inplace=True)
+conscapita2030 = conscapita2030.drop(columns = ['state'])
+
+# Merging #
+merge1 = pd.merge(countypop_prediction, gasprices_prediction, on='State', how='inner')
+
+merge2 = merge1
+#merge2 = pd.merge(merge1, conscapita2030, on='County')
+
+merge2['consumption (gallons/capita)'] = conscapita2030['consumption (gallons/capita)']
+merge2['Demand'] = merge2['2030 Population'] * merge2['January 2030 Price'] * conscapita2030['consumption (gallons/capita)']
+
+countyDemand = merge2
+countyDemand = countyDemand.drop(columns = ['2030 Population', 'January 2030 Price', 'consumption (gallons/capita)'])
+
+##### Data Visualization #####
+
+countyDemand.sort_values(by='Demand', ascending=False).head(10)
+
+merge2.sort_values(by='Demand', ascending=False).head(10)
+merge2.sort_values(by='Demand', ascending=False).head(20)
+merge2.sort_values(by='Demand', ascending=False)
+
+
+merge2.sort_values(by='Demand', ascending=False).tail(20)
+gasprices['Date'] = pd.to_datetime(gasprices['Date'])        
